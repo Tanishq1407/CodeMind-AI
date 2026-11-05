@@ -1,0 +1,1 @@
+import {Assistant} from "@/components/assistant";export default function Page(){return <><h1>AI assistant</h1><p className="muted">Optional provider-backed help. Assistant output is generated advice, not a verified finding.</p><Assistant/></>}

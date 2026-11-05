@@ -1,0 +1,2 @@
+import {PublicPage} from "@/components/site";
+export default function Forgot(){return <PublicPage title="Reset your password" description="Password reset email delivery is not configured in this release."><div className="card" style={{marginBottom:70}}><h3>Email delivery setup required</h3><p>Configure a transactional email provider and token-based reset workflow before enabling password resets. For safety, this page does not reveal whether an email address has an account.</p></div></PublicPage>}

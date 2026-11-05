@@ -1,0 +1,4 @@
+import {NextResponse} from "next/server";import {z} from "zod";import {auth} from "@/lib/auth";import {prisma} from "@/lib/prisma";
+const schema=z.object({name:z.string().trim().min(1).max(80),description:z.string().max(500).optional()});
+export async function GET(){const s=await auth();if(!s?.user)return NextResponse.json({error:"Sign in required."},{status:401});const projects=await prisma.project.findMany({where:{userId:s.user.id},orderBy:{updatedAt:"desc"},include:{_count:{select:{files:true,analyses:true}}}});return NextResponse.json({projects});}
+export async function POST(req:Request){const s=await auth();if(!s?.user)return NextResponse.json({error:"Sign in required."},{status:401});const parsed=schema.safeParse(await req.json());if(!parsed.success)return NextResponse.json({error:"Invalid project details."},{status:400});const project=await prisma.project.create({data:{...parsed.data,userId:s.user.id}});return NextResponse.json({project},{status:201});}

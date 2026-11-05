@@ -1,0 +1,15 @@
+.venv/
+node_modules/
+.next/
+coverage/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.streamlit/secrets.toml
+data/
+*.sqlite3
+*.db
+.setup_hash
