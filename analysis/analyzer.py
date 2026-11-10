@@ -4,8 +4,10 @@ import ast
 import re
 from collections import Counter
 
-def _issue(title: str, severity: str, message: str, line: int | None = None) -> dict:
-    return {"title": title, "severity": severity, "message": message, "line": line}
+def _issue(title: str, severity: str, message: str, line: int | None = None,
+           category: str = "Maintainability", suggestion: str | None = None) -> dict:
+    return {"title": title, "severity": severity, "message": message, "line": line,
+            "category": category, "suggestion": suggestion}
 
 def _score(findings: list[dict]) -> tuple[int, dict]:
     weights = {"High": 15, "Medium": 7, "Low": 3}
@@ -28,17 +30,40 @@ class _PythonVisitor(ast.NodeVisitor):
     def __init__(self):
         self.functions = self.classes = self.loops = self.conditionals = self.complexity = 0
         self.findings = []
+        self.loop_depth = 0
     def visit_FunctionDef(self, node):
         self.functions += 1; self.complexity += 1
         if len(node.args.args) > 6:
-            self.findings.append(_issue("Many function parameters", "Low", f"'{node.name}' has {len(node.args.args)} parameters; consider grouping related values.", node.lineno))
+            self.findings.append(_issue("Many function parameters", "Low", f"'{node.name}' has {len(node.args.args)} parameters; consider grouping related values.", node.lineno, "Maintainability", "Group parameters that represent one cohesive concept into a named configuration object, or split the function if the parameters serve unrelated tasks."))
+        # Limit this check to functions without nested scopes, so closure references
+        # are not incorrectly reported as unused locals.
+        if not any(isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
+                   for statement in node.body for child in ast.walk(statement) if child is not statement):
+            assigned, loaded = {}, set()
+            for statement in node.body:
+                for child in ast.walk(statement):
+                    if isinstance(child, ast.Name):
+                        if isinstance(child.ctx, ast.Store): assigned.setdefault(child.id, child.lineno)
+                        elif isinstance(child.ctx, ast.Load): loaded.add(child.id)
+            arguments = {arg.arg for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)}
+            if node.args.vararg: arguments.add(node.args.vararg.arg)
+            if node.args.kwarg: arguments.add(node.args.kwarg.arg)
+            for name, line in assigned.items():
+                if name != "_" and name not in loaded and name not in arguments:
+                    self.findings.append(_issue("Assigned variable is never read", "Low", f"Local name '{name}' is assigned in this function but no read of that name appears in the same function scope. An assigned call may still have intentional side effects.", line, "Maintainability", "Remove the assignment if it is unnecessary, or use the value. If the right-hand side is intentionally evaluated for side effects, make that intent explicit."))
         self.generic_visit(node)
     visit_AsyncFunctionDef = visit_FunctionDef
     def visit_ClassDef(self, node):
         self.classes += 1; self.generic_visit(node)
     def visit_For(self, node):
-        self.loops += 1; self.complexity += 1; self.generic_visit(node)
-    visit_AsyncFor = visit_For
+        self.loops += 1; self.complexity += 1
+        if self.loop_depth:
+            self.findings.append(_issue("Nested loop", "Medium", "This loop is nested inside another loop. If both traverse input-sized collections, runtime may grow multiplicatively; inspect the collection sizes and dependency between iterations.", node.lineno, "Performance", "If the inner loop repeatedly searches or matches values, build a set or dictionary once and use constant-time membership or lookup where semantics allow. Nested loops can be appropriate when each pair is required."))
+        self.loop_depth += 1
+        self.generic_visit(node)
+        self.loop_depth -= 1
+    def visit_AsyncFor(self, node):
+        self.visit_For(node)
     def visit_While(self, node):
         self.loops += 1; self.complexity += 1; self.generic_visit(node)
     def visit_If(self, node):
@@ -51,9 +76,9 @@ class _PythonVisitor(ast.NodeVisitor):
         self.complexity += len(node.handlers); self.generic_visit(node)
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id == "print":
-            self.findings.append(_issue("Debug or console output", "Low", "Review print() calls and use deliberate logging or UI output.", node.lineno))
+            self.findings.append(_issue("Debug or console output", "Low", "Review print() calls and use deliberate logging or UI output.", node.lineno, "Maintainability", "Remove temporary output, or route intentional diagnostics through the application's configured logger."))
         if isinstance(node.func, ast.Name) and node.func.id in {"eval", "exec"}:
-            self.findings.append(_issue("Dynamic code execution", "High", "eval/exec can execute arbitrary input. Avoid them or constrain the design to trusted data.", node.lineno))
+            self.findings.append(_issue("Dynamic code execution", "High", "eval/exec can execute arbitrary input. Avoid them or constrain the design to trusted data.", node.lineno, "Security", "Replace string-to-code evaluation with a format-specific parser such as json.loads for JSON data. If dynamic execution is essential, do not pass untrusted input and review the design separately."))
         self.generic_visit(node)
 
 def _report(language, metrics, structure, findings, recommendations, method):

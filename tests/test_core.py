@@ -17,6 +17,14 @@ class AnalyzerTests(unittest.TestCase):
         report=analyze("eval(user_input)","Python")
         self.assertEqual(report["quality_score"],85)
         self.assertEqual(report["score_explanation"]["total_penalty"],15)
+    def test_python_unused_local_and_nested_loop_evidence(self):
+        report=analyze_python("def f(items, values):\n    unused = 4\n    for item in items:\n        for value in values:\n            print(item, value)\n")
+        unused=next(f for f in report["findings"] if f["title"]=="Assigned variable is never read")
+        nested=next(f for f in report["findings"] if f["title"]=="Nested loop")
+        self.assertEqual(unused["line"],2)
+        self.assertEqual(unused["category"],"Maintainability")
+        self.assertIn("may grow multiplicatively",nested["message"])
+        self.assertEqual(nested["line"],4)
     def test_malformed_python(self):
         report=analyze_python("def broken(:")
         self.assertEqual(report["findings"][0]["title"],"Python syntax error")

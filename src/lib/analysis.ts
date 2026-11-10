@@ -1,4 +1,4 @@
-export type Finding = { title: string; severity: "High" | "Medium" | "Low" | "Info"; message: string; line?: number | null };
+export type Finding = { title: string; severity: "High" | "Medium" | "Low" | "Info"; message: string; line?: number | null; category?: string; suggestion?: string | null };
 export type Analysis = { language: string; analysis_method: string; metrics: Record<string, number>; structure: Record<string, number>; findings: Finding[]; recommendations: string[]; quality_score: number; score_explanation: Record<string, unknown>; limitations: string };
 const maxBytes = 100_000;
 const weights={High:15,Medium:7,Low:3,Info:0};

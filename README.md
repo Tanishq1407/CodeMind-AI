@@ -13,6 +13,8 @@ CodeMind AI is a web-first code analysis workspace. The existing Streamlit MVP r
 - Email verification, password reset, password change, account deletion, profile editing, and persistent HMAC-keyed database rate limits (requires Resend email configuration).
 - Per-account rolling limits of 100 analyses and 20 AI requests per 24 hours.
 - Optional server-side AI endpoint; it is disabled until configured.
+- Personal Coding Intelligence from each account's saved findings and heuristic score history. Recurrence is based on observed reports; score comparisons require ten analyses and are not a measure of programming skill.
+- Coding activity heatmap and streaks derived from completed, saved analysis runs. Activity days use UTC consistently because user timezone preferences are not currently stored.
 - Persistent analysis history, score comparison, search/filtering, JSON/PDF downloads, and report deletion.
 - Saved AI conversations, per-account quotas, and an administrator dashboard with account status and audit events.
 
@@ -23,6 +25,10 @@ The score is a heuristic: start at 100, subtract 15 per High, 7 per Medium, and 
 - Node.js 20.9 or newer and npm.
 - PostgreSQL 14 or newer (local or managed).
 - Python 3.10+ only for the preserved analysis service / Streamlit MVP.
+
+### Windows builds from a OneDrive workspace
+
+Some Windows/OneDrive configurations can deny replacement of Prisma's generated engine or creation of Next.js output directories inside the synced checkout. To validate a production build without touching the checkout's `.next`, Prisma client, `.env.local`, or database, run `npm run build:windows-staged`. The script copies only source/configuration and the already installed `node_modules` into a unique `%TEMP%` directory outside OneDrive, uses temporary non-production environment values, and retains the staged output. It does not copy `.env` files or delete source artifacts. Vercel and other non-OneDrive deployments should continue using `npm run build`.
 - Resend account/API key and verified sender for email verification and recovery.
 
 ## Local web development

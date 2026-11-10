@@ -1,5 +1,8 @@
 import Link from "next/link";
-export function Brand(){return <Link href="/" className="brand"><img src="/brand/codemind-mark.svg" alt=""/><span>CodeMind AI</span></Link>}
+import Image from "next/image";
+import { ArrowLeft } from "lucide-react";
+export function Brand(){return <Link href="/" className="brand"><Image src="/brand/codemind-mark.svg" alt="" width={34} height={34}/><span>CodeMind AI</span></Link>}
+export function BackToDashboard(){return <Link href="/dashboard" className="back-dashboard"><ArrowLeft size={16} aria-hidden="true"/><span>Dashboard</span></Link>}
 export function Header(){return <header className="nav"><div className="wrap navin site-nav"><Brand/><nav className="navlinks" aria-label="Main navigation"><Link href="/#features">Features</Link></nav><div className="navactions"><Link href="/login" className="subtle">Sign in</Link><Link href="/register" className="btn primary">Start analyzing</Link></div></div></header>}
 export function Footer(){return <footer className="footer"><div className="wrap footerin"><Brand/><span>Built for careful code review. © {new Date().getFullYear()} CodeMind AI</span><nav className="footlinks"><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/contact">Contact</Link></nav></div></footer>}
-export function PublicPage({title,description,children}:{title:string;description:string;children:React.ReactNode}){return <><Header/><main className="wrap"><div className="pagehero"><span className="eyebrow"><span className="dot"/> CODEMIND AI</span><h1>{title}</h1><p>{description}</p></div>{children}</main><Footer/></>}
+export function PublicPage({title,description,children}:{title:string;description:string;children:React.ReactNode}){return <><Header/><main className="wrap"><BackToDashboard/><div className="pagehero"><span className="eyebrow"><span className="dot"/> CODEMIND AI</span><h1>{title}</h1><p>{description}</p></div>{children}</main><Footer/></>}

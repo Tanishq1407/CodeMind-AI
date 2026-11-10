@@ -6,6 +6,7 @@
     "postinstall": "prisma generate",
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "build:windows-staged": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-outside-onedrive.ps1",
     "start": "next start",
     "lint": "eslint src e2e scripts prisma/seed.ts next.config.ts eslint.config.mjs playwright.config.ts vitest.config.ts postcss.config.mjs",
     "typecheck": "tsc --noEmit",

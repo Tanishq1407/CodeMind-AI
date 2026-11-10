@@ -21,6 +21,8 @@ Copy `.env.example` to `.env.local` for local development. Keep real values out 
 
 Google/GitHub and AI credentials are optional. The email/password account flow requires Resend so it can verify addresses and deliver recovery links. The API fails closed if email delivery is not configured.
 
+The Coding Assistant uses a real OpenAI-compatible chat completions API only when all three AI variables are configured. Without them, requests return a setup message and no assistant answer is fabricated. Requests may send the user-entered prompt, explicitly attached code or a selected saved report's source, plus a compact summary of that same user's recurring findings and score history. The summary does not include other users' data. The configured provider may charge per token; review its pricing and data-retention terms before enabling it. For production, set these values as server-only Vercel environment variables and redeploy after changes.
+
 ## Local registration setup
 
 Registration requires all four server-side settings: `DATABASE_URL`, `AUTH_SECRET`, `RESEND_API_KEY`, and `EMAIL_FROM`. If one is missing, the API returns a configuration error naming the missing variable(s) before it writes an account. Do not put these values in `NEXT_PUBLIC_*` variables or commit `.env.local`.
