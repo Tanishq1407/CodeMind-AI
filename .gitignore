@@ -1,6 +1,7 @@
 .venv/
 node_modules/
 .next/
+*.tsbuildinfo
 coverage/
 .env
 .env.*
@@ -13,3 +14,4 @@ data/
 *.sqlite3
 *.db
 .setup_hash
+.neon

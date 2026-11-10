@@ -9,8 +9,12 @@ CodeMind AI is a web-first code analysis workspace. The existing Streamlit MVP r
 - Protected dashboard, private report history, Monaco editor, and private project CRUD.
 - Analysis API with a 100 KB request limit and no arbitrary code execution.
 - Python AST and clearly labeled C++ lexical checks through the included FastAPI service. A limited, explicitly labeled lexical fallback is available if that service is not configured.
-- Optional server-side AI endpoint; it is disabled until configured.
+- JavaScript AST parsing through Acorn and Java grammar parsing through `java-parser`; rule coverage is intentionally narrower than full project linters.
+- Email verification, password reset, password change, account deletion, profile editing, and persistent HMAC-keyed database rate limits (requires Resend email configuration).
 - Per-account rolling limits of 100 analyses and 20 AI requests per 24 hours.
+- Optional server-side AI endpoint; it is disabled until configured.
+- Persistent analysis history, score comparison, search/filtering, JSON/PDF downloads, and report deletion.
+- Saved AI conversations, per-account quotas, and an administrator dashboard with account status and audit events.
 
 The score is a heuristic: start at 100, subtract 15 per High, 7 per Medium, and 3 per Low finding, then clamp at zero. It is not an industry-standard metric and does not establish correctness or security.
 
@@ -19,15 +23,16 @@ The score is a heuristic: start at 100, subtract 15 per High, 7 per Medium, and 
 - Node.js 20.9 or newer and npm.
 - PostgreSQL 14 or newer (local or managed).
 - Python 3.10+ only for the preserved analysis service / Streamlit MVP.
+- Resend account/API key and verified sender for email verification and recovery.
 
 ## Local web development
 
-1. Copy `.env.example` to `.env.local`. Set `DATABASE_URL` and generate `AUTH_SECRET` with `openssl rand -base64 32` (or another secure random generator).
+1. If `.env.local` does not already exist, copy `.env.example` to `.env.local`; do not overwrite an existing local environment file. Set `DATABASE_URL` to a PostgreSQL database you control, generate `AUTH_SECRET` with `openssl rand -base64 32`, and configure `RESEND_API_KEY` plus a verified `EMAIL_FROM` sender. See [local registration setup](ENVIRONMENT_VARIABLES.md#local-registration-setup).
 2. Install dependencies: `npm install`.
-3. Create the database and apply the development migration: `npx prisma migrate dev --name init`.
-4. (Recommended) Install `analysis_service/requirements.txt` in a Python environment and run `uvicorn analysis_service.main:app --host 127.0.0.1 --port 8000`. Keep the service private; set `ANALYSIS_SERVICE_URL=http://127.0.0.1:8000` in `.env.local`.
+3. Generate the Prisma client and apply the development migration: `npx prisma generate`, then `npm run db:dev`. Set both `DATABASE_URL` and `DATABASE_URL_UNPOOLED`; for Neon, use its pooled and direct URLs respectively. Re-run `npx prisma generate` after changing `prisma/schema.prisma` before starting the app; a stale generated client can prevent API routes from compiling.
+4. (Recommended) Install `analysis_service/requirements.txt`, set the same random `ANALYSIS_SERVICE_TOKEN` in the web app and service environment, and run `uvicorn analysis_service.main:app --host 127.0.0.1 --port 8000`. Keep the service private; set `ANALYSIS_SERVICE_URL=http://127.0.0.1:8000` in `.env.local`.
 5. Start the web app: `npm run dev`; visit http://localhost:3000.
-6. Create an account at `/register`. Sign in at `/login`.
+6. Create an account at `/register`, then verify the email before signing in at `/login`.
 
 Without step 4, the app labels and uses a limited lexical fallback. It does not have Python AST parsing or full C++ tooling in that mode.
 
@@ -48,4 +53,4 @@ The original Streamlit app is still available: `run_codemind_ai.bat`, or `.venv/
 
 ## Known gaps before public production use
 
-Email verification, password reset/change, transactional email, account deletion, persistent multi-provider AI conversations, PDF export, GitHub repository import/selection, user suspension controls, distributed rate limiting, and production-grade monitoring still need implementation/configuration. The legal pages are drafts. Do not present the current build as a complete hosted SaaS until these controls and deployment are reviewed.
+GitHub repository import/selection is not implemented; GitHub is identity-only. Email delivery, OAuth, AI, PostgreSQL, and the private analysis service need external configuration. The Java and JavaScript rules are intentionally narrower than full project linters, and C++ checks are limited. The legal pages are drafts. Production monitoring, backups, retention policy, and deployment review remain operational work; this repository is not publicly deployed.

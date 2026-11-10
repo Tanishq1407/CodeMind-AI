@@ -13,9 +13,9 @@
 ## Before production
 
 - Set a strong unique `AUTH_SECRET`; configure secure production origins and OAuth callback URLs.
-- Add email verification, reset/change password flows, account deletion, CSRF review, and abuse protection.
-- Current rate limiting is not distributed and should be added before exposing account/analysis endpoints broadly.
-- Protect the analysis service behind private networking or service authentication; do not publish it as an unauthenticated endpoint.
+- Configure Resend for verification and password recovery, and run authenticated account flows through a production review.
+- Rate limits use durable, HMAC-keyed PostgreSQL counters. Protect the database and verify ingress IP headers so client-supplied proxy headers cannot bypass IP buckets.
+- Protect the analysis service behind private networking as well as its shared service token; do not publish it publicly.
 - Review database TLS, pooled connections, backups, retention, access policies, logs, and incident response.
 - GitHub OAuth is identity-only in this release; bearer and refresh tokens are not persisted. Repository import is not implemented; do not assume linked accounts can access repositories.
 - Legal/privacy pages are drafts and need jurisdiction-specific review.

@@ -13,6 +13,7 @@ CREATE TABLE "User" (
   "passwordHash" TEXT,
   "role" "Role" NOT NULL DEFAULT 'USER',
   "status" "AccountStatus" NOT NULL DEFAULT 'ACTIVE',
+  "sessionVersion" INTEGER NOT NULL DEFAULT 0,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "User_pkey" PRIMARY KEY ("id")
@@ -34,6 +35,20 @@ CREATE TABLE "Session" (
 );
 CREATE TABLE "VerificationToken" (
   "identifier" TEXT NOT NULL, "token" TEXT NOT NULL, "expires" TIMESTAMP(3) NOT NULL
+);
+CREATE TABLE "EmailVerificationToken" (
+  "id" TEXT NOT NULL, "userId" TEXT NOT NULL, "tokenHash" TEXT NOT NULL,
+  "expiresAt" TIMESTAMP(3) NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "EmailVerificationToken_pkey" PRIMARY KEY ("id")
+);
+CREATE TABLE "PasswordResetToken" (
+  "id" TEXT NOT NULL, "userId" TEXT NOT NULL, "tokenHash" TEXT NOT NULL,
+  "expiresAt" TIMESTAMP(3) NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "PasswordResetToken_pkey" PRIMARY KEY ("id")
+);
+CREATE TABLE "RateLimitEntry" (
+  "key" TEXT NOT NULL, "count" INTEGER NOT NULL DEFAULT 0, "expiresAt" TIMESTAMP(3) NOT NULL,
+  "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "RateLimitEntry_pkey" PRIMARY KEY ("key")
 );
 CREATE TABLE "Project" (
   "id" TEXT NOT NULL, "userId" TEXT NOT NULL, "name" TEXT NOT NULL, "description" TEXT,
@@ -67,7 +82,7 @@ CREATE TABLE "Conversation" (
   CONSTRAINT "Conversation_pkey" PRIMARY KEY ("id")
 );
 CREATE TABLE "AiMessage" (
-  "id" TEXT NOT NULL, "conversationId" TEXT NOT NULL, "role" "MessageRole" NOT NULL, "content" TEXT NOT NULL,
+  "id" TEXT NOT NULL, "conversationId" TEXT NOT NULL, "position" SERIAL NOT NULL, "role" "MessageRole" NOT NULL, "content" TEXT NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "AiMessage_pkey" PRIMARY KEY ("id")
 );
@@ -95,6 +110,11 @@ CREATE UNIQUE INDEX "Session_sessionToken_key" ON "Session"("sessionToken");
 CREATE INDEX "Session_userId_idx" ON "Session"("userId");
 CREATE UNIQUE INDEX "VerificationToken_token_key" ON "VerificationToken"("token");
 CREATE UNIQUE INDEX "VerificationToken_identifier_token_key" ON "VerificationToken"("identifier", "token");
+CREATE UNIQUE INDEX "EmailVerificationToken_tokenHash_key" ON "EmailVerificationToken"("tokenHash");
+CREATE INDEX "EmailVerificationToken_userId_expiresAt_idx" ON "EmailVerificationToken"("userId", "expiresAt");
+CREATE UNIQUE INDEX "PasswordResetToken_tokenHash_key" ON "PasswordResetToken"("tokenHash");
+CREATE INDEX "PasswordResetToken_userId_expiresAt_idx" ON "PasswordResetToken"("userId", "expiresAt");
+CREATE INDEX "RateLimitEntry_expiresAt_idx" ON "RateLimitEntry"("expiresAt");
 CREATE INDEX "Project_userId_updatedAt_idx" ON "Project"("userId", "updatedAt");
 CREATE UNIQUE INDEX "ProjectFile_projectId_name_key" ON "ProjectFile"("projectId", "name");
 CREATE INDEX "ProjectFile_projectId_idx" ON "ProjectFile"("projectId");
@@ -103,13 +123,15 @@ CREATE INDEX "AnalysisRun_projectId_createdAt_idx" ON "AnalysisRun"("projectId",
 CREATE UNIQUE INDEX "AnalysisReport_analysisId_key" ON "AnalysisReport"("analysisId");
 CREATE INDEX "AnalysisFinding_analysisId_severity_idx" ON "AnalysisFinding"("analysisId", "severity");
 CREATE INDEX "Conversation_userId_updatedAt_idx" ON "Conversation"("userId", "updatedAt");
-CREATE INDEX "AiMessage_conversationId_createdAt_idx" ON "AiMessage"("conversationId", "createdAt");
+CREATE INDEX "AiMessage_conversationId_position_idx" ON "AiMessage"("conversationId", "position");
 CREATE UNIQUE INDEX "GithubConnection_userId_key" ON "GithubConnection"("userId");
 CREATE INDEX "UsageRecord_userId_kind_createdAt_idx" ON "UsageRecord"("userId", "kind", "createdAt");
 CREATE INDEX "AdminAuditLog_actorId_createdAt_idx" ON "AdminAuditLog"("actorId", "createdAt");
 CREATE INDEX "AdminAuditLog_action_createdAt_idx" ON "AdminAuditLog"("action", "createdAt");
 
 ALTER TABLE "UserProfile" ADD CONSTRAINT "UserProfile_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "EmailVerificationToken" ADD CONSTRAINT "EmailVerificationToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "PasswordResetToken" ADD CONSTRAINT "PasswordResetToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "Account" ADD CONSTRAINT "Account_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "Session" ADD CONSTRAINT "Session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "Project" ADD CONSTRAINT "Project_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
