@@ -34,6 +34,12 @@ The score is a heuristic: start at 100, subtract 15 per High, 7 per Medium, and 
 5. Start the web app: `npm run dev`; visit http://localhost:3000.
 6. Create an account at `/register`, then verify the email before signing in at `/login`.
 
+## Production database migration
+
+For Neon production, configure Vercel's Production environment with the branch's pooled `DATABASE_URL` and direct `DATABASE_URL_UNPOOLED`. In a trusted release environment, review `node scripts/prisma-with-env.mjs migrate status`, then apply checked-in migrations with `npm run db:migrate` and verify status again. See [Neon production migrations](DEPLOYMENT.md#neon-production-migrations). Never run `npm run db:dev` against production.
+
+Set `RESEND_API_KEY` and `EMAIL_FROM=CodeMind AI <noreply@codemindai.site>` in the Vercel Production environment for verification email delivery.
+
 Without step 4, the app labels and uses a limited lexical fallback. It does not have Python AST parsing or full C++ tooling in that mode.
 
 ## Legacy MVP

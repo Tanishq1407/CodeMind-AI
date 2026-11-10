@@ -29,8 +29,39 @@ export function registrationDatabaseFailure(error: unknown) {
       body: { error: "PostgreSQL is unavailable. Check DATABASE_URL and confirm the database is running.", code: "DATABASE_UNAVAILABLE" },
     };
   }
+  if (code === "P2021" || code === "P2022") {
+    return {
+      status: 503,
+      body: { error: "The database schema is not up to date. Apply the pending Prisma migrations, then retry.", code: "DATABASE_SCHEMA_NOT_READY" },
+    };
+  }
   return {
     status: 503,
     body: { error: "The account could not be saved. Check PostgreSQL connectivity and apply the database migrations.", code: "DATABASE_OPERATION_FAILED" },
+  };
+}
+
+export function registrationEmailConflict(isVerified: boolean) {
+  return {
+    status: 409,
+    body: isVerified
+      ? { error: "Email already exists. Please sign in or reset your password.", code: "EMAIL_ALREADY_EXISTS", field: "email" }
+      : { error: "An account with this email already exists but is not verified. Please verify your email or resend the verification link.", code: "EMAIL_NOT_VERIFIED", field: "email" },
+  };
+}
+
+export function registrationUsernameConflict() {
+  return {
+    status: 409,
+    body: { error: "Username already exists. Please choose another username.", code: "USERNAME_ALREADY_EXISTS", field: "username" },
+  };
+}
+
+export function registrationDatabaseLogMetadata(error: unknown, stage: string) {
+  const value = error && typeof error === "object" ? error as { code?: unknown; name?: unknown } : {};
+  return {
+    stage,
+    errorName: typeof value.name === "string" ? value.name : "UnknownError",
+    ...(typeof value.code === "string" ? { prismaCode: value.code } : {}),
   };
 }

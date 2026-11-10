@@ -16,7 +16,7 @@ Copy `.env.example` to `.env.local` for local development. Keep real values out 
 | `AI_PROVIDER`, `AI_API_KEY`, `AI_MODEL` | Optional | Server-only assistant configuration. Set `AI_PROVIDER=openai-compatible` for an OpenAI-compatible chat completions endpoint. Never prefix secrets with `NEXT_PUBLIC_`. |
 | `AI_BASE_URL` | Optional | Base URL for the configured compatible API; defaults to `https://api.openai.com/v1`. |
 | `RESEND_API_KEY` | Required for account verification/recovery | Resend API key, kept server-side. |
-| `EMAIL_FROM` | Required for account verification/recovery | Verified sender identity accepted by Resend, such as `CodeMind <accounts@example.com>`. |
+| `EMAIL_FROM` | Required for account verification/recovery | Verified Resend sender. For this project use `CodeMind AI <noreply@codemindai.site>`. |
 | `ADMIN_EMAIL` | Optional | Existing registered account to elevate when running the explicit seed command. Never stores or sets a password. |
 
 Google/GitHub and AI credentials are optional. The email/password account flow requires Resend so it can verify addresses and deliver recovery links. The API fails closed if email delivery is not configured.

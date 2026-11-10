@@ -4,7 +4,7 @@
 
 - **Local:** Next.js on port 3000, PostgreSQL, and optionally FastAPI on loopback port 8000.
 - **Preview:** use a separate database, Auth.js secret, OAuth callback registration, and AI key. Never point preview at production data.
-- **Production target:** Next.js on Vercel; PostgreSQL on Supabase (or another managed PostgreSQL provider). Build the analysis service from `analysis_service/Dockerfile` on a private Python host/network path; Vercel functions cannot reach the local loopback service. Configure the same `ANALYSIS_SERVICE_TOKEN` on both services. If no private service URL is configured, the app uses the limited lexical fallback.
+- **Production target:** Next.js on Vercel; PostgreSQL on Neon. Build the analysis service from `analysis_service/Dockerfile` on a private Python host/network path; Vercel functions cannot reach the local loopback service. Configure the same `ANALYSIS_SERVICE_TOKEN` on both services. If no private service URL is configured, the app uses the limited lexical fallback.
 
 ## Deploy checklist
 
@@ -16,6 +16,25 @@
 6. Build with `npm run build`. Verify public routes, auth callbacks, private data isolation, and analysis behavior in preview before production traffic.
 7. For initial admin access, register the intended account, set `ADMIN_EMAIL` in a trusted release environment, then run `npm run db:seed`. Remove/unset the variable after provisioning. The seed updates only the matching registered account.
 8. Add a custom domain in Vercel and follow its DNS instructions at the registrar. Configure the domain's apex and `www` records exactly as shown by Vercel, select a canonical redirect, and wait for Vercel-managed TLS/HTTPS validation.
+
+## Neon production migrations
+
+Keep `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct) scoped to the Neon production branch. Configure both as Vercel Production environment variables and in the trusted migration environment. The repository's `prisma/migrations` files are the source of truth; never use `prisma db push` or `npm run db:dev` against production.
+
+For a trusted release environment with the Neon CLI authenticated and the production branch linked:
+
+```powershell
+neon status
+neon env pull --file .env.local --service postgres
+npm run db:validate
+node scripts/prisma-with-env.mjs migrate status
+npm run db:migrate
+node scripts/prisma-with-env.mjs migrate status
+```
+
+The auth uniqueness migration first checks for case-insensitive email or username collisions and aborts without modifying users if any exist. Resolve such conflicts through an explicit account-owner decision before retrying; never delete accounts as an automatic migration step.
+
+Review the migration status before applying. `npm run db:migrate` runs Prisma `migrate deploy`, which applies only checked-in migrations and does not generate a development migration. Then redeploy the Vercel production app so it uses the configured variables. Do not print or commit `.env.local`.
 
 ## codemindai.com
 

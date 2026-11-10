@@ -34,7 +34,9 @@ enum MessageRole {
 model User {
   id                String            @id @default(cuid())
   name              String?
+  // Case-insensitive uniqueness is enforced by the expression index in the auth migration.
   username          String?           @unique
+  // Case-insensitive email uniqueness is enforced by the expression index in the auth migration.
   email             String            @unique
   emailVerified     DateTime?
   image             String?

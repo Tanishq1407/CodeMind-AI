@@ -22,10 +22,15 @@ const identityOnlyAdapter: NonNullable<typeof baseAdapter> = { ...baseAdapter, a
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: identityOnlyAdapter, session: { strategy: "jwt", maxAge: 8*60*60 },
   pages: { signIn: "/login" }, providers: [...providers, Credentials({ credentials: { email: {}, password: {} }, async authorize(credentials,request) {
-    const parsed = z.object({ email: z.email(), password: z.string().min(1).max(128) }).safeParse(credentials);
+    const parsed = z.object({ email: z.string().trim().toLowerCase().pipe(z.email()), password: z.string().min(1).max(128) }).safeParse(credentials);
     if (!parsed.success) return null;
-    const [emailAllowed,ipAllowed]=await Promise.all([consumeRateLimit(`login-email:${parsed.data.email.toLowerCase()}`,10,15*60*1000),consumeRateLimit(`login-ip:${requestIp(request)}`,30,15*60*1000)]);if(!emailAllowed||!ipAllowed)return null;
-    const user = await prisma.user.findUnique({ where: { email: parsed.data.email.toLowerCase() } });
+    const [emailAllowed,ipAllowed]=await Promise.all([consumeRateLimit(`login-email:${parsed.data.email}`,10,15*60*1000),consumeRateLimit(`login-ip:${requestIp(request)}`,30,15*60*1000)]);if(!emailAllowed||!ipAllowed)return null;
+    const matches = await prisma.$queryRaw<Array<{id:string;name:string|null;email:string;image:string|null;passwordHash:string|null;emailVerified:Date|null;status:string;role:string}>>`
+      SELECT "id","name","email","image","passwordHash","emailVerified","status","role" FROM "User"
+      WHERE LOWER(BTRIM("email")) = ${parsed.data.email}
+      LIMIT 1
+    `;
+    const user = matches[0];
     if (!user?.passwordHash || !user.emailVerified || user.status !== "ACTIVE" || !(await compare(parsed.data.password, user.passwordHash))) return null;
     return { id: user.id, name: user.name, email: user.email, image: user.image, role: user.role };
   } })],
