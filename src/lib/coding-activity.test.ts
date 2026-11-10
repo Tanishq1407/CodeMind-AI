@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { activityLevel, buildCodingActivity, utcDay } from "./coding-activity";
+import { groupActivityMonths } from "./activity-heatmap";
 
 const fixedNow=new Date("2026-11-10T18:00:00.000Z");
 
@@ -60,6 +61,16 @@ describe("coding activity aggregation",()=>{
 
   it("assigns stable activity intensity thresholds",()=>{
     expect([0,1,2,3,4,6,7,20].map(activityLevel)).toEqual([0,1,2,2,3,3,4,4]);
+  });
+
+  it("groups all 365 actual days into chronologically labeled month sections",()=>{
+    const result=buildCodingActivity([],fixedNow);
+    const months=groupActivityMonths(result.days);
+    expect(months.flatMap(month=>month.days)).toHaveLength(365);
+    expect(months.length).toBe(13);
+    expect(months[0]).toMatchObject({key:"2025-11",label:"Nov"});
+    expect(months.at(-1)).toMatchObject({key:"2026-11",label:"Nov"});
+    expect(months.every(month=>month.days.every(day=>day.date.startsWith(month.key)))).toBe(true);
   });
 
   it("does not include activity before the rolling 365-day window or future dates",()=>{

@@ -43,6 +43,7 @@ export function activityLevel(count: number): ActivityDay["level"] {
   return 4;
 }
 
+
 export function buildCodingActivity(rows: DailyActivityInput[], now: Date): CodingActivity {
   const today = utcDay(now);
   const todayTimestamp = parseDay(today)!;

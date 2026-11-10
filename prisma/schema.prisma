@@ -198,8 +198,10 @@ model AnalysisFinding {
   title      String
   message    String
   line       Int?
+  lineEnd    Int?
   source     String          @default("static")
   suggestion String?
+  suggestedCode String?      @db.Text
   analysis   AnalysisRun     @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
   @@index([analysisId, severity])

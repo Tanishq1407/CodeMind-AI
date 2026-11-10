@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { groupActivityMonths } from "@/lib/activity-heatmap";
 import type { ActivityDay, CodingActivity } from "@/lib/coding-activity";
 
 function analysisWord(count:number){return count===1?"analysis":"analyses";}
@@ -9,8 +10,6 @@ function activityText(day:ActivityDay){
   const formatted=new Intl.DateTimeFormat("en-US",{month:"long",day:"numeric",year:"numeric",timeZone:"UTC"}).format(date);
   return `${formatted} — ${day.count} ${analysisWord(day.count)}`;
 }
-function monthLabel(date:string){return new Intl.DateTimeFormat("en-US",{month:"short",timeZone:"UTC"}).format(new Date(`${date}T00:00:00.000Z`));}
-
 function MonthGrid({month,days,onSelect,onHover,selectedDate}:{month:string;days:ActivityDay[];onSelect:(day:ActivityDay)=>void;onHover:(day:ActivityDay|null)=>void;selectedDate:string|null}){
   const firstDate=new Date(`${days[0].date}T00:00:00.000Z`);
   const mondayOffset=(firstDate.getUTCDay()+6)%7;
@@ -26,11 +25,10 @@ function MonthGrid({month,days,onSelect,onHover,selectedDate}:{month:string;days
 function ActivityGrid({activity}:{activity:CodingActivity}){
   const [selected,setSelected]=useState<ActivityDay|null>(null);
   const [hovered,setHovered]=useState<ActivityDay|null>(null);
-  const months=new Map<string,ActivityDay[]>();
-  for(const day of activity.days){const key=day.date.slice(0,7);const rows=months.get(key)||[];rows.push(day);months.set(key,rows);}
+  const months=groupActivityMonths(activity.days);
   const current=hovered||selected;
   return <>
-    <div className="activity-grid-heading"><div className="activity-weekdays" aria-hidden="true"><span style={{gridRow:1}}>Mon</span><span style={{gridRow:3}}>Wed</span><span style={{gridRow:5}}>Fri</span></div><div className="activity-months">{[...months.entries()].map(([key,days])=><MonthGrid key={key} month={monthLabel(`${key}-01`)} days={days} selectedDate={selected?.date||null} onHover={setHovered} onSelect={day=>setSelected(value=>value?.date===day.date?null:day)}/>)}</div></div>
+    <div className="activity-grid-heading"><div className="activity-weekdays" aria-hidden="true"><span style={{gridRow:1}}>Mon</span><span style={{gridRow:3}}>Wed</span><span style={{gridRow:5}}>Fri</span></div><div className="activity-months">{months.map(({key,label,days})=><MonthGrid key={key} month={label} days={days} selectedDate={selected?.date||null} onHover={setHovered} onSelect={day=>setSelected(value=>value?.date===day.date?null:day)}/>)}</div></div>
     <div className="activity-detail" aria-live="polite">{current?activityText(current):<span>Select a day for its analysis count.</span>}</div>
     <div className="activity-legend" aria-label="Activity levels"><span>Less</span>{[0,1,2,3,4].map(level=><span key={level} className={`activity-cell level-${level}`} aria-label={`Level ${level}`}/>) }<span>More</span></div>
   </>;

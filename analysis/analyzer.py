@@ -2,12 +2,16 @@
 from __future__ import annotations
 import ast
 import re
+import symtable
 from collections import Counter
 
 def _issue(title: str, severity: str, message: str, line: int | None = None,
-           category: str = "Maintainability", suggestion: str | None = None) -> dict:
+           category: str = "Maintainability", suggestion: str | None = None,
+           line_end: int | None = None, suggested_code: str | None = None) -> dict:
     return {"title": title, "severity": severity, "message": message, "line": line,
-            "category": category, "suggestion": suggestion}
+            "line_end": line_end if line_end is not None else line,
+            "category": category, "suggestion": suggestion,
+            "suggested_code": suggested_code}
 
 def _score(findings: list[dict]) -> tuple[int, dict]:
     weights = {"High": 15, "Medium": 7, "Low": 3}
@@ -26,42 +30,189 @@ def _line_metrics(source: str, language: str) -> dict:
     return {"lines_of_code": sum(bool(line.strip()) for line in lines), "blank_lines": blank,
             "comment_lines": comments, "total_lines": len(lines)}
 
+class _BindingLocations(ast.NodeVisitor):
+    """Collect bindings in one lexical scope, without entering child scopes."""
+    def __init__(self, root):
+        self.root = root
+        self.bindings: dict[str, tuple[int, str]] = {}
+    def visit_FunctionDef(self, node):
+        if node is self.root:
+            for statement in node.body: self.visit(statement)
+    visit_AsyncFunctionDef = visit_FunctionDef
+    def visit_ClassDef(self, node):
+        if node is self.root:
+            for statement in node.body: self.visit(statement)
+    def visit_Lambda(self, node): return
+    def visit_ListComp(self, node): return
+    visit_SetComp = visit_ListComp
+    visit_DictComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Store) and node.id != "_":
+            # The full source line is more useful than the bare identifier.
+            segment = getattr(self, "source_lines", [])
+            text = segment[node.lineno - 1].strip() if len(segment) >= node.lineno else node.id
+            self.bindings.setdefault(node.id, (node.lineno, text))
+    def visit_Import(self, node):
+        for alias in node.names:
+            name = alias.asname or alias.name.split(".")[0]
+            self.bindings.setdefault(name, (node.lineno, f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
+    def visit_ImportFrom(self, node):
+        if node.module == "__future__": return
+        for alias in node.names:
+            if alias.name == "*": continue
+            name = alias.asname or alias.name
+            self.bindings.setdefault(name, (node.lineno, f"from {node.module or '.'} import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
+
+
+def _scope_is_dynamic(node: ast.AST) -> bool:
+    class DynamicUse(ast.NodeVisitor):
+        found = False
+        def visit_FunctionDef(self, child):
+            if child is node:
+                for statement in child.body: self.visit(statement)
+        visit_AsyncFunctionDef = visit_FunctionDef
+        def visit_Lambda(self, child): return
+        def visit_ClassDef(self, child): return
+        def visit_Call(self, child):
+            if isinstance(child.func, ast.Name) and child.func.id in {"eval", "exec", "locals", "globals", "vars"}:
+                self.found = True
+            self.generic_visit(child)
+    visitor = DynamicUse(); visitor.visit(node)
+    return visitor.found
+
+
+def _code_without_line(source: str, line: int) -> str | None:
+    lines = source.splitlines()
+    if len(lines) > 30 or len(source) > 4_000 or not 1 <= line <= len(lines) or ";" in lines[line - 1]:
+        return None
+    candidate = "\n".join(lines[:line - 1] + lines[line:])
+    try: ast.parse(candidate)
+    except SyntaxError: return None
+    return candidate or None
+
+
+def _unused_bindings(tree: ast.Module, source: str) -> list[dict]:
+    """Report names not read in their lexical scope; skip dynamic namespaces."""
+    root_table = symtable.symtable(source, "<analysis>", "exec")
+    nodes = {("top", 0): tree}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            nodes[(node.name, node.lineno)] = node
+    results = []
+
+    def visit_table(table):
+        node = nodes.get((table.get_name(), table.get_lineno()))
+        if table.get_type() != "module" and node is None:
+            for child in table.get_children(): visit_table(child)
+            return
+        if table.get_type() in {"module", "function"} and node is not None and not _scope_is_dynamic(node):
+            locations = _BindingLocations(node); locations.source_lines = source.splitlines(); locations.visit(node)
+            symbols = {symbol.get_name(): symbol for symbol in table.get_symbols()}
+            # A closure or nested global reference counts as a read of the bound name.
+            descendant_reads: set[str] = set()
+            def find_descendant_reads(parent):
+                for child in parent.get_children():
+                    for symbol in child.get_symbols():
+                        if symbol.is_referenced() and (symbol.is_free() or symbol.is_global()):
+                            descendant_reads.add(symbol.get_name())
+                    find_descendant_reads(child)
+            find_descendant_reads(table)
+            for name, (line, binding) in locations.bindings.items():
+                symbol = symbols.get(name)
+                if not symbol or symbol.is_parameter() or symbol.is_referenced() or name in descendant_reads:
+                    continue
+                if symbol.is_global() and table.get_type() != "module": continue
+                if symbol.is_nonlocal(): continue
+                if symbol.is_imported():
+                    results.append(_issue(
+                        f"Unused import `{name}`", "Low",
+                        f"`{binding}` is imported on line {line}, but `{name}` is not referenced in this scope. If the import is intended only for side effects, keep it with a comment; otherwise it can be removed.",
+                        line, "Maintainability", f"Remove `{binding}` if it is not needed for import-time side effects.", line,
+                    ))
+                elif symbol.is_assigned() and not symbol.is_namespace():
+                    scope_label = "module" if table.get_type() == "module" else "function"
+                    caveat = " If this module-level name is a public API consumed by other modules, keep and document it." if scope_label == "module" else ""
+                    results.append(_issue(
+                        f"Unused variable `{name}`", "Low",
+                        f"`{name}` is assigned by `{binding}` on line {line}, but no read of `{name}` appears in this {scope_label} or a nested scope.{caveat}",
+                        line, "Maintainability", f"Remove `{binding}` if its value is not needed.{caveat}", line,
+                        suggested_code=_code_without_line(source, line),
+                    ))
+        for child in table.get_children(): visit_table(child)
+    visit_table(root_table)
+    return results
+
+
+def _pure_expression(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Constant, ast.Name)): return True
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_pure_expression(value) for value in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(key is None or _pure_expression(key) for key in node.keys) and all(_pure_expression(value) for value in node.values)
+    if isinstance(node, ast.UnaryOp): return _pure_expression(node.operand)
+    if isinstance(node, ast.BinOp): return _pure_expression(node.left) and _pure_expression(node.right)
+    if isinstance(node, ast.BoolOp): return all(_pure_expression(value) for value in node.values)
+    if isinstance(node, ast.Compare): return _pure_expression(node.left) and all(_pure_expression(value) for value in node.comparators)
+    return False
+
+
+def _duplicate_assignments(tree: ast.Module, source: str) -> list[dict]:
+    """Catch only adjacent, identical assignments with syntactically pure values."""
+    findings = []
+    for parent in ast.walk(tree):
+        body = getattr(parent, "body", None)
+        if not isinstance(body, list): continue
+        for previous, current in zip(body, body[1:]):
+            if not isinstance(previous, ast.Assign) or not isinstance(current, ast.Assign): continue
+            if not _pure_expression(previous.value) or not _pure_expression(current.value): continue
+            if (len(previous.targets) == len(current.targets) == 1
+                    and isinstance(previous.targets[0], ast.Name)
+                    and isinstance(current.targets[0], ast.Name)
+                    and ast.dump(previous.targets[0], include_attributes=False) == ast.dump(current.targets[0], include_attributes=False)
+                    and ast.dump(previous.value, include_attributes=False) == ast.dump(current.value, include_attributes=False)):
+                target = ", ".join(ast.unparse(item) for item in current.targets)
+                expression = ast.unparse(current.value)
+                findings.append(_issue(
+                    f"Repeated identical assignment to `{target}`", "Low",
+                    f"Line {current.lineno} assigns `{target} = {expression}` immediately after the same assignment on line {previous.lineno}. The second assignment overwrites the same value without an intervening operation.",
+                    current.lineno, "Maintainability", f"Remove the duplicate assignment on line {current.lineno}.", current.lineno,
+                    _code_without_line(source, current.lineno),
+                ))
+    return findings
+
+
 class _PythonVisitor(ast.NodeVisitor):
-    def __init__(self):
+    def __init__(self, source: str):
+        self.source = source
+        self.source_lines = source.splitlines()
         self.functions = self.classes = self.loops = self.conditionals = self.complexity = 0
         self.findings = []
-        self.loop_depth = 0
+        self.loop_stack: list[ast.AST] = []
     def visit_FunctionDef(self, node):
         self.functions += 1; self.complexity += 1
         if len(node.args.args) > 6:
             self.findings.append(_issue("Many function parameters", "Low", f"'{node.name}' has {len(node.args.args)} parameters; consider grouping related values.", node.lineno, "Maintainability", "Group parameters that represent one cohesive concept into a named configuration object, or split the function if the parameters serve unrelated tasks."))
-        # Limit this check to functions without nested scopes, so closure references
-        # are not incorrectly reported as unused locals.
-        if not any(isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
-                   for statement in node.body for child in ast.walk(statement) if child is not statement):
-            assigned, loaded = {}, set()
-            for statement in node.body:
-                for child in ast.walk(statement):
-                    if isinstance(child, ast.Name):
-                        if isinstance(child.ctx, ast.Store): assigned.setdefault(child.id, child.lineno)
-                        elif isinstance(child.ctx, ast.Load): loaded.add(child.id)
-            arguments = {arg.arg for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)}
-            if node.args.vararg: arguments.add(node.args.vararg.arg)
-            if node.args.kwarg: arguments.add(node.args.kwarg.arg)
-            for name, line in assigned.items():
-                if name != "_" and name not in loaded and name not in arguments:
-                    self.findings.append(_issue("Assigned variable is never read", "Low", f"Local name '{name}' is assigned in this function but no read of that name appears in the same function scope. An assigned call may still have intentional side effects.", line, "Maintainability", "Remove the assignment if it is unnecessary, or use the value. If the right-hand side is intentionally evaluated for side effects, make that intent explicit."))
         self.generic_visit(node)
     visit_AsyncFunctionDef = visit_FunctionDef
     def visit_ClassDef(self, node):
         self.classes += 1; self.generic_visit(node)
     def visit_For(self, node):
         self.loops += 1; self.complexity += 1
-        if self.loop_depth:
-            self.findings.append(_issue("Nested loop", "Medium", "This loop is nested inside another loop. If both traverse input-sized collections, runtime may grow multiplicatively; inspect the collection sizes and dependency between iterations.", node.lineno, "Performance", "If the inner loop repeatedly searches or matches values, build a set or dictionary once and use constant-time membership or lookup where semantics allow. Nested loops can be appropriate when each pair is required."))
-        self.loop_depth += 1
+        if self.loop_stack:
+            outer = self.loop_stack[-1]
+            outer_iter, inner_iter = ast.unparse(outer.iter), ast.unparse(node.iter)
+            outer_target, inner_target = ast.unparse(outer.target), ast.unparse(node.target)
+            self.findings.append(_issue(
+                "Repeated nested iteration", "Low",
+                f"`for {inner_target} in {inner_iter}` (line {node.lineno}) runs for each `for {outer_target} in {outer_iter}` iteration (line {outer.lineno}). When those iterables contain N and M items, respectively, this body executes N×M times (O(N×M)); that cost is justified if every pair is needed.",
+                node.lineno, "Performance",
+                f"Keep both loops when each pair must be processed. If the inner loop repeatedly searches `{inner_iter}` for a matching key, build a set or dictionary before the outer loop and use a lookup instead.",
+                getattr(node, "end_lineno", node.lineno),
+            ))
+        self.loop_stack.append(node)
         self.generic_visit(node)
-        self.loop_depth -= 1
+        self.loop_stack.pop()
     def visit_AsyncFor(self, node):
         self.visit_For(node)
     def visit_While(self, node):
@@ -75,10 +226,25 @@ class _PythonVisitor(ast.NodeVisitor):
     def visit_Try(self, node):
         self.complexity += len(node.handlers); self.generic_visit(node)
     def visit_Call(self, node):
-        if isinstance(node.func, ast.Name) and node.func.id == "print":
-            self.findings.append(_issue("Debug or console output", "Low", "Review print() calls and use deliberate logging or UI output.", node.lineno, "Maintainability", "Remove temporary output, or route intentional diagnostics through the application's configured logger."))
         if isinstance(node.func, ast.Name) and node.func.id in {"eval", "exec"}:
-            self.findings.append(_issue("Dynamic code execution", "High", "eval/exec can execute arbitrary input. Avoid them or constrain the design to trusted data.", node.lineno, "Security", "Replace string-to-code evaluation with a format-specific parser such as json.loads for JSON data. If dynamic execution is essential, do not pass untrusted input and review the design separately."))
+            self.findings.append(_issue("Dynamic code execution", "High", f"`{ast.unparse(node)}` executes a string as Python code at line {node.lineno}. If that string can contain user-controlled data, it can run unintended operations.", node.lineno, "Security", "For JSON input, replace evaluation with `json.loads(value)`. If dynamic execution is essential, ensure the string is trusted and review the design separately.", getattr(node, "end_lineno", node.lineno)))
+        self.generic_visit(node)
+
+    def visit_Compare(self, node):
+        for index, operator in enumerate(node.ops):
+            left = node.left if index == 0 else node.comparators[index - 1]
+            right = node.comparators[index]
+            literal = next((value for value in (left, right) if isinstance(value, ast.Constant) and value.value is not None), None)
+            if len(node.ops) == 1 and isinstance(operator, (ast.Is, ast.IsNot)) and literal is not None:
+                line = node.lineno
+                expression = ast.unparse(node)
+                operator_text = "is not" if isinstance(operator, ast.IsNot) else "is"
+                self.findings.append(_issue(
+                    "Identity comparison with a value literal", "Low",
+                    f"`{expression}` uses `{operator_text}` with a non-None literal on line {line}. `is` checks object identity, not value equality, so the result is not a reliable value comparison.",
+                    line, "Correctness", f"Use `==` or `!=` for value comparison: `{expression.replace(' is not ', ' != ').replace(' is ', ' == ')}`.", getattr(node, "end_lineno", line),
+                ))
+                break
         self.generic_visit(node)
 
 def _report(language, metrics, structure, findings, recommendations, method):
@@ -97,17 +263,13 @@ def analyze_python(source: str) -> dict:
     except SyntaxError as exc:
         issue = _issue("Python syntax error", "High", exc.msg, exc.lineno)
         return _report("Python", metrics, {}, [issue], ["Fix the syntax error, then analyze again."], "AST")
-    visitor = _PythonVisitor(); visitor.visit(tree)
+    visitor = _PythonVisitor(source); visitor.visit(tree)
     metrics.update({"functions": visitor.functions, "classes": visitor.classes, "loops": visitor.loops,
                     "conditionals": visitor.conditionals, "approx_complexity": visitor.complexity})
-    findings = visitor.findings
+    findings = _unused_bindings(tree, source) + _duplicate_assignments(tree, source) + visitor.findings
     if not visitor.functions and metrics["lines_of_code"] > 20:
         findings.append(_issue("Large module without functions", "Low", "Consider splitting the module into focused functions or classes."))
-    recommendations = ["Keep functions focused and add tests around important behavior."]
-    if any(f["title"] == "Dynamic code execution" for f in findings):
-        recommendations.insert(0, "Remove eval/exec where possible; parse data with a safe format-specific parser.")
-    if not findings:
-        recommendations.insert(0, "No configured quality heuristics were triggered; this does not prove the code is correct or secure.")
+    recommendations = list(dict.fromkeys(f["suggestion"] for f in findings if f.get("suggestion")))
     structure = {k: metrics[k] for k in ("functions", "classes", "loops", "conditionals", "approx_complexity")}
     return _report("Python", metrics, structure, findings, recommendations, "AST")
 
