@@ -59,6 +59,8 @@ The auth uniqueness migration first checks for case-insensitive email or usernam
 
 Review the migration status before applying. `npm run db:migrate` runs Prisma `migrate deploy`, which applies only checked-in migrations and does not generate a development migration. Then redeploy the Vercel production app so it uses the configured variables. Do not print or commit `.env.local`.
 
+Analysis reports use `AnalysisFinding.lineEnd` and `AnalysisFinding.suggestedCode`, introduced by `prisma/migrations/20261110000001_precise_finding_locations/migration.sql`. Vercel's build runs `prisma generate` but does **not** apply database migrations. Before deploying code that writes these fields, run `node scripts/prisma-with-env.mjs migrate status` and apply pending checked-in migrations with `npm run db:migrate` from a trusted environment configured for the same Neon production branch. If logs show Prisma `P2022` for `AnalysisFinding`, check that this migration is listed as applied; do not use `db push` as a substitute.
+
 ## codemindai.com
 
 Domain registration availability has not been checked. Check availability with an accredited registrar before selecting it. If unavailable, consider `codemind.ai`, `usecodemind.com`, or `codemind.dev`, subject to registration availability and trademark review. Add the chosen domain in Vercel, set DNS records as instructed, and update `AUTH_URL`, `NEXT_PUBLIC_APP_URL`, and OAuth callback URLs.

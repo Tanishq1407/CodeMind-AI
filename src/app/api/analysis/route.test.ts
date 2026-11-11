@@ -47,7 +47,11 @@ describe("POST /api/analysis service errors and ownership", () => {
     prismaMock.usageRecord.count.mockResolvedValue(0);
     prismaMock.project.findFirst.mockResolvedValue({ id: "project-a" });
     prismaMock.analysisRun.create.mockResolvedValue({ id: "analysis-a" });
-    prismaMock.$transaction.mockResolvedValue([{ id: "analysis-a" }, {}]);
+    prismaMock.usageRecord.create.mockResolvedValue({ id: "usage-a" });
+    prismaMock.$transaction.mockImplementation(async (callback) => callback({
+      analysisRun: prismaMock.analysisRun,
+      usageRecord: prismaMock.usageRecord,
+    }));
     analysisMock.mockResolvedValue(report);
   });
   afterEach(() => vi.restoreAllMocks());
@@ -74,6 +78,14 @@ describe("POST /api/analysis service errors and ownership", () => {
     const createCall = prismaMock.analysisRun.create.mock.calls[0][0];
     expect(createCall.data.userId).toBe("user-a");
     expect(createCall.data.findings.create[0]).toMatchObject({ line: 1, lineEnd: 1, suggestedCode: "print('ok')" });
+    expect(createCall.data.report.create).toMatchObject({
+      summary: "1 finding(s) from configured static checks.",
+      recommendations: ["Remove unused locals."],
+      scoreExplanation: { starting_score: 100 },
+      limitations: "Static analysis only.",
+    });
+    expect(prismaMock.usageRecord.create).toHaveBeenCalledWith({ data: { userId: "user-a", kind: "analysis" } });
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it("maps informational findings to the supported PostgreSQL INFO enum", async () => {
@@ -102,15 +114,28 @@ describe("POST /api/analysis service errors and ownership", () => {
   it("distinguishes database persistence failures from analyzer failures", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const databaseError = Object.assign(new Error("database connection secret"), {
-      code: "P2000",
+      code: "P2022",
+      meta: { modelName: "AnalysisFinding", column: "suggestedCode" },
       constructor: { name: "PrismaClientKnownRequestError" },
     });
-    prismaMock.$transaction.mockRejectedValue(databaseError);
+    prismaMock.analysisRun.create.mockRejectedValue(databaseError);
     const response = await POST(makeRequest({ source: "x = 1", language: "Python" }));
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "The analysis completed, but its report could not be saved. Please retry." });
-    expect(log).toHaveBeenCalledWith("[analysis] request failed", { stage: "database_save", errorKind: "internal", errorName: "Error", databaseCode: "P2000" });
+    expect(log).toHaveBeenCalledWith("[analysis] request failed", { stage: "database_save", errorKind: "internal", errorName: "Error", operation: "analysis_run.create_with_report_and_findings", code: "P2022", model: "AnalysisFinding" });
     expect(log.mock.calls.flat().join(" ")).not.toContain("database connection secret");
+    expect(log.mock.calls.flat().join(" ")).not.toContain("suggestedCode");
+  });
+
+  it("identifies usage-record failure separately while keeping all writes transactional", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    prismaMock.usageRecord.create.mockRejectedValue(new Error("private connection detail"));
+    const response = await POST(makeRequest({ source: "x = 1", language: "Python" }));
+    expect(response.status).toBe(503);
+    expect(log).toHaveBeenCalledWith("[analysis] request failed", expect.objectContaining({
+      stage: "database_save", operation: "usage_record.create", errorName: "Error",
+    }));
+    expect(log.mock.calls.flat().join(" ")).not.toContain("private connection detail");
   });
 
   it("does not log arbitrary database codes or database error details", async () => {
