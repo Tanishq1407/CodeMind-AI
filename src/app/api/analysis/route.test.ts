@@ -76,6 +76,18 @@ describe("POST /api/analysis service errors and ownership", () => {
     expect(createCall.data.findings.create[0]).toMatchObject({ line: 1, lineEnd: 1, suggestedCode: "print('ok')" });
   });
 
+  it("maps informational findings to the supported PostgreSQL INFO enum", async () => {
+    analysisMock.mockResolvedValueOnce({
+      ...report,
+      findings: [{ title: "No issue detected", severity: "Informational", message: "This is informational only." }],
+    });
+    const response = await POST(makeRequest({ source: "x = 1", language: "Python" }));
+    expect(response.status).toBe(200);
+    const createCall = prismaMock.analysisRun.create.mock.calls[0][0];
+    expect(createCall.data.findings.create[0].severity).toBe("INFO");
+    expect(prismaMock.$transaction).toHaveBeenCalled();
+  });
+
   it("returns a safe actionable service error and logs only stage and error type", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     analysisMock.mockRejectedValue(new AnalysisServiceError("unavailable", "Python analysis service could not be reached."));
@@ -89,11 +101,28 @@ describe("POST /api/analysis service errors and ownership", () => {
 
   it("distinguishes database persistence failures from analyzer failures", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    prismaMock.$transaction.mockRejectedValue(new Error("database connection secret"));
+    const databaseError = Object.assign(new Error("database connection secret"), {
+      code: "P2000",
+      constructor: { name: "PrismaClientKnownRequestError" },
+    });
+    prismaMock.$transaction.mockRejectedValue(databaseError);
     const response = await POST(makeRequest({ source: "x = 1", language: "Python" }));
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "The analysis completed, but its report could not be saved. Please retry." });
-    expect(log).toHaveBeenCalledWith("[analysis] request failed", { stage: "database_save", errorKind: "internal", errorName: "Error" });
+    expect(log).toHaveBeenCalledWith("[analysis] request failed", { stage: "database_save", errorKind: "internal", errorName: "Error", databaseCode: "P2000" });
     expect(log.mock.calls.flat().join(" ")).not.toContain("database connection secret");
+  });
+
+  it("does not log arbitrary database codes or database error details", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const databaseError = Object.assign(new Error("private query details"), {
+      code: "not-a-prisma-code",
+      constructor: { name: "PrismaClientKnownRequestError" },
+    });
+    prismaMock.$transaction.mockRejectedValue(databaseError);
+    const response = await POST(makeRequest({ source: "x = 1", language: "Python" }));
+    expect(response.status).toBe(503);
+    expect(log.mock.calls.flat().join(" ")).not.toContain("private query details");
+    expect(log.mock.calls.flat().join(" ")).not.toContain("not-a-prisma-code");
   });
 });
