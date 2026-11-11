@@ -8,7 +8,7 @@ CodeMind AI is a web-first code analysis workspace. The existing Streamlit MVP r
 - Auth.js email/password sign-in with bcrypt hashes; optional GitHub and Google OAuth.
 - Protected dashboard, private report history, Monaco editor, and private project CRUD.
 - Analysis API with a 100 KB request limit and no arbitrary code execution.
-- Python AST and clearly labeled C++ lexical checks through the included FastAPI service. A limited, explicitly labeled lexical fallback is available if that service is not configured.
+- Python AST and clearly labeled C++ lexical checks through the included FastAPI service. A limited lexical fallback is available only for local development when the service URL is unset; production requires the authenticated service configuration.
 - JavaScript AST parsing through Acorn and Java grammar parsing through `java-parser`; rule coverage is intentionally narrower than full project linters.
 - Email verification, password reset, password change, account deletion, profile editing, and persistent HMAC-keyed database rate limits (requires Resend email configuration).
 - Per-account rolling limits of 100 analyses and 20 AI requests per 24 hours.
@@ -30,6 +30,7 @@ The score is a heuristic: start at 100, subtract 15 per High, 7 per Medium, and 
 
 Some Windows/OneDrive configurations can deny replacement of Prisma's generated engine or creation of Next.js output directories inside the synced checkout. To validate a production build without touching the checkout's `.next`, Prisma client, `.env.local`, or database, run `npm run build:windows-staged`. The script copies only source/configuration and the already installed `node_modules` into a unique `%TEMP%` directory outside OneDrive, uses temporary non-production environment values, and retains the staged output. It does not copy `.env` files or delete source artifacts. Vercel and other non-OneDrive deployments should continue using `npm run build`.
 - Resend account/API key and verified sender for email verification and recovery.
+- For production Python/C++ analysis, deploy the FastAPI service to Render and configure `ANALYSIS_SERVICE_URL` plus the shared `ANALYSIS_SERVICE_TOKEN` in Vercel. See [Render analysis-service deployment](DEPLOYMENT.md#render-python-analysis-service).
 
 ## Local web development
 
@@ -46,7 +47,7 @@ For Neon production, configure Vercel's Production environment with the branch's
 
 Set `RESEND_API_KEY` and `EMAIL_FROM=CodeMind AI <noreply@codemindai.site>` in the Vercel Production environment for verification email delivery.
 
-Without step 4, the app labels and uses a limited lexical fallback. It does not have Python AST parsing or full C++ tooling in that mode.
+Without step 4, local development labels and uses a limited lexical fallback. In production, missing service configuration returns a clear setup error rather than silently claiming AST analysis.
 
 ## Legacy MVP
 
@@ -61,7 +62,7 @@ The original Streamlit app is still available: `run_codemind_ai.bat`, or `.venv/
 
 ## Checks
 
-`npm run typecheck`, `npm run lint`, `npm test`, `npm run test:e2e`, `npm run build`, and `python -m unittest discover -s tests` are available. Database-backed and browser flows require a configured PostgreSQL database; browser tests need Playwright's Chromium installation.
+`npm run typecheck`, `npm run lint`, `npm test`, `npm run test:e2e`, `npm run build`, and `python -m unittest discover -s tests` are available. To run FastAPI endpoint tests, install `analysis_service/test-requirements.txt`, then run `python -m unittest discover -s analysis_service -p 'test_*.py'`. Database-backed and browser flows require a configured PostgreSQL database; browser tests need Playwright's Chromium installation.
 
 ## Known gaps before public production use
 

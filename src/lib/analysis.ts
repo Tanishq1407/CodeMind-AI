@@ -1,5 +1,34 @@
+import { z } from "zod";
+
 export type Finding = { title: string; severity: "Critical" | "High" | "Medium" | "Low" | "Informational" | "Info"; message: string; line?: number | null; line_end?: number | null; category?: string; suggestion?: string | null; suggested_code?: string | null };
 export type Analysis = { language: string; analysis_method: string; metrics: Record<string, number>; structure: Record<string, number>; findings: Finding[]; recommendations: string[]; quality_score: number; score_explanation: Record<string, unknown>; limitations: string };
+
+export type AnalysisServiceErrorKind = "configuration" | "unavailable" | "timeout" | "invalid_response";
+export class AnalysisServiceError extends Error {
+  constructor(readonly kind: AnalysisServiceErrorKind, message: string) { super(message); this.name = "AnalysisServiceError"; }
+}
+
+const serviceFindingSchema = z.object({
+  title: z.string().min(1).max(300),
+  severity: z.enum(["Critical", "High", "Medium", "Low", "Informational", "Info"]),
+  message: z.string().max(20_000),
+  line: z.number().int().positive().nullable().optional(),
+  line_end: z.number().int().positive().nullable().optional(),
+  category: z.string().max(100).optional(),
+  suggestion: z.string().max(20_000).nullable().optional(),
+  suggested_code: z.string().max(100_000).nullable().optional(),
+});
+const analysisResponseSchema = z.object({
+  language: z.enum(["Python", "C++"]),
+  analysis_method: z.string().min(1).max(200),
+  metrics: z.record(z.string(), z.number()),
+  structure: z.record(z.string(), z.number()),
+  findings: z.array(serviceFindingSchema).max(1_000),
+  recommendations: z.array(z.string().max(20_000)).max(1_000),
+  quality_score: z.number().int().min(0).max(100),
+  score_explanation: z.record(z.string(), z.unknown()),
+  limitations: z.string().max(20_000),
+});
 const maxBytes = 100_000;
 const weights:Record<Finding["severity"],number>={Critical:25,High:15,Medium:7,Low:3,Informational:0,Info:0};
 function report(language:string,method:string,metrics:Record<string,number>,findings:Finding[],recommendations:string[],limitations:string):Analysis{const score=Math.max(0,100-findings.reduce((sum,f)=>sum+weights[f.severity],0));return{language,analysis_method:method,metrics,structure:{},findings,recommendations,quality_score:score,score_explanation:{starting_score:100,weight_by_severity:weights,penalties:Object.fromEntries(Object.keys(weights).map(k=>[k,findings.filter(f=>f.severity===k).length])),total_penalty:100-score,formula:"max(0, 100 - sum(severity weights for detected findings))"},limitations};}
@@ -21,17 +50,71 @@ async function analyzeJava(source:string):Promise<Analysis>{const {parse}=await 
   for(const [key,value] of Object.entries(node))if(key==="children"||Array.isArray(value))visit(value);
  }
  visit(tree);const lines=source.split(/\r?\n/);if(/\bRuntime\s*\.\s*getRuntime\s*\(\s*\)\s*\.\s*exec\s*\(/.test(source))findings.push({title:"Process execution",severity:"High",message:"Runtime.exec starts an operating-system process. Review input trust, permissions, and whether process execution is required.",line:Math.max(1,lines.findIndex(x=>/Runtime\s*\.\s*getRuntime/.test(x))+1)});const metrics={lines_of_code:lines.filter(x=>x.trim()).length,total_lines:lines.length,classes,functions:methods,branches,loops,approx_complexity:1+branches+loops};return report("Java","Java grammar parser + lexical rules",metrics,findings,["Review process execution and error handling carefully.","Use build-time static analysis and tests for broader type and data-flow coverage."],"The parser validates Java grammar; the configured rules are limited and partly lexical. This is not full type resolution, data-flow, dependency, or security analysis.");}
+function analysisServiceEndpoint(base: string): string {
+  let parsed: URL;
+  try { parsed = new URL(base); }
+  catch { throw new AnalysisServiceError("configuration", "ANALYSIS_SERVICE_URL must be a valid URL."); }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new AnalysisServiceError("configuration", "ANALYSIS_SERVICE_URL must be an HTTP(S) origin or base path without credentials, query, or fragment.");
+  }
+  if (process.env.NODE_ENV === "production" && parsed.protocol !== "https:") {
+    throw new AnalysisServiceError("configuration", "ANALYSIS_SERVICE_URL must use HTTPS in production.");
+  }
+  return `${base.replace(/\/+$/, "")}/analyze`;
+}
+
+async function analyzeWithService(source: string, language: "Python" | "C++", base: string): Promise<Analysis> {
+  const serviceToken = process.env.ANALYSIS_SERVICE_TOKEN;
+  if (!serviceToken?.trim()) {
+    throw new AnalysisServiceError("configuration", "ANALYSIS_SERVICE_TOKEN is missing from the Next.js server environment.");
+  }
+  const endpoint = analysisServiceEndpoint(base);
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codemind-service-token": serviceToken },
+      body: JSON.stringify({ source, language }),
+      signal: AbortSignal.timeout(12_000),
+      cache: "no-store",
+    });
+  } catch (error) {
+    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    throw new AnalysisServiceError(timedOut ? "timeout" : "unavailable", timedOut
+      ? "Python analysis service timed out. Check the Render service health and retry."
+      : "Python analysis service could not be reached. Check its deployment and health endpoint.");
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new AnalysisServiceError("configuration", "The Python analysis service rejected its configured credential. Verify the Render and Vercel ANALYSIS_SERVICE_TOKEN values match.");
+  }
+  if (!response.ok) {
+    throw new AnalysisServiceError("unavailable", "Python analysis service returned an error. Check the Render deployment logs.");
+  }
+  let body: string;
+  try { body = await response.text(); }
+  catch { throw new AnalysisServiceError("invalid_response", "Python analysis service returned an unreadable response."); }
+  if (new TextEncoder().encode(body).length > 1_000_000) {
+    throw new AnalysisServiceError("invalid_response", "Python analysis service returned an oversized response.");
+  }
+  let payload: unknown;
+  try { payload = JSON.parse(body); }
+  catch { throw new AnalysisServiceError("invalid_response", "Python analysis service returned invalid JSON."); }
+  const parsed = analysisResponseSchema.safeParse(payload);
+  if (!parsed.success || parsed.data.language !== language) {
+    throw new AnalysisServiceError("invalid_response", "Python analysis service returned an invalid analysis report.");
+  }
+  return parsed.data;
+}
+
 export async function runAnalysis(source: string, language: string): Promise<Analysis> {
   if (new TextEncoder().encode(source).length > maxBytes) throw new Error("Source is larger than the 100 KB limit.");
   if(language==="JavaScript")return analyzeJavaScript(source);
   if(language==="Java")return analyzeJava(source);
   if (!(["Python", "C++"] as string[]).includes(language)) throw new Error("Currently available analysis: Python, C++, Java, and JavaScript.");
-  const base = process.env.ANALYSIS_SERVICE_URL;
-  if (base) {
-    const serviceToken=process.env.ANALYSIS_SERVICE_TOKEN;if(!serviceToken)throw new Error("Analysis service authentication is not configured.");
-    const response = await fetch(`${base.replace(/\/$/, "")}/analyze`, { method: "POST", headers: { "content-type": "application/json", "x-codemind-service-token":serviceToken }, body: JSON.stringify({ source, language }), signal: AbortSignal.timeout(12_000) });
-    if (!response.ok) throw new Error("Analysis service returned an error.");
-    return await response.json() as Analysis;
+  const base = process.env.ANALYSIS_SERVICE_URL?.trim();
+  if (base) return analyzeWithService(source, language as "Python" | "C++", base);
+  if (process.env.NODE_ENV === "production") {
+    throw new AnalysisServiceError("configuration", "Python analysis is not configured. Set ANALYSIS_SERVICE_URL and ANALYSIS_SERVICE_TOKEN in the Vercel server environment.");
   }
   // Offline fallback is deliberately conservative and labeled as lexical analysis.
   const lines = source.split(/\r?\n/), findings: Finding[] = [];

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: codemind-ai-python-analysis
+    runtime: python
+    rootDir: .
+    buildCommand: pip install -r analysis_service/requirements.txt
+    startCommand: uvicorn analysis_service.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.10
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: ANALYSIS_SERVICE_TOKEN
+        generateValue: true

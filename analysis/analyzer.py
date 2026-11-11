@@ -84,7 +84,7 @@ def _scope_is_dynamic(node: ast.AST) -> bool:
 
 def _code_without_line(source: str, line: int) -> str | None:
     lines = source.splitlines()
-    if len(lines) > 30 or len(source) > 4_000 or not 1 <= line <= len(lines) or ";" in lines[line - 1]:
+    if len(lines) > 80 or len(source) > 4_000 or not 1 <= line <= len(lines) or ";" in lines[line - 1]:
         return None
     candidate = "\n".join(lines[:line - 1] + lines[line:])
     try: ast.parse(candidate)
@@ -195,6 +195,37 @@ class _PythonVisitor(ast.NodeVisitor):
             self.findings.append(_issue("Many function parameters", "Low", f"'{node.name}' has {len(node.args.args)} parameters; consider grouping related values.", node.lineno, "Maintainability", "Group parameters that represent one cohesive concept into a named configuration object, or split the function if the parameters serve unrelated tasks."))
         self.generic_visit(node)
     visit_AsyncFunctionDef = visit_FunctionDef
+    def visit_Assign(self, node):
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.Add):
+            target = node.targets[0].id
+            left, right = node.value.left, node.value.right
+            zero_side = None
+            if isinstance(left, ast.Name) and left.id == target and isinstance(right, ast.Constant) and type(right.value) in (int, float, complex) and right.value == 0:
+                zero_side = right
+            elif isinstance(right, ast.Name) and right.id == target and isinstance(left, ast.Constant) and type(left.value) in (int, float, complex) and left.value == 0:
+                zero_side = left
+            if zero_side is not None:
+                code = self.source_lines[node.lineno - 1].strip() if node.lineno <= len(self.source_lines) else ast.unparse(node)
+                self.findings.append(_issue(
+                    f"Potential redundant addition of zero to `{target}`", "Low",
+                    f"`{code}` reassigns `{target}` by adding numeric zero. For ordinary numeric values, this does not change the value; retain it only if a custom `__add__` implementation or explicit operation is intentional.",
+                    node.lineno, "Performance", f"Remove `{code}` if `{target}` contains ordinary numeric values; it adds no value to the result.",
+                    getattr(node, "end_lineno", node.lineno), _code_without_line(self.source, node.lineno),
+                ))
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node):
+        if isinstance(node.target, ast.Name) and isinstance(node.op, ast.Add) and isinstance(node.value, ast.Constant) and type(node.value.value) in (int, float, complex) and node.value.value == 0:
+            target = node.target.id
+            code = self.source_lines[node.lineno - 1].strip() if node.lineno <= len(self.source_lines) else ast.unparse(node)
+            self.findings.append(_issue(
+                f"Potential redundant addition of zero to `{target}`", "Low",
+                f"`{code}` adds numeric zero to `{target}`. For ordinary numeric values, this leaves the value unchanged; retain it only if a custom `__iadd__` implementation or explicit operation is intentional.",
+                node.lineno, "Performance", f"Remove `{code}` if `{target}` contains ordinary numeric values; it adds no value to the result.",
+                getattr(node, "end_lineno", node.lineno), _code_without_line(self.source, node.lineno),
+            ))
+        self.generic_visit(node)
+
     def visit_ClassDef(self, node):
         self.classes += 1; self.generic_visit(node)
     def visit_For(self, node):

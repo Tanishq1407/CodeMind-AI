@@ -53,6 +53,60 @@ class AnalyzerTests(unittest.TestCase):
         finding=next(f for f in report["findings"] if f["title"]=="Identity comparison with a value literal")
         self.assertEqual(finding["line"],1)
         self.assertIn("==",finding["suggestion"])
+    def test_requested_average_sample_has_precise_findings_without_output_false_positives(self):
+        source="""def calculate_average(numbers):
+    total = 0
+    unused_value = 100
+
+    for number in numbers:
+        total = total + number
+        total = total + 0
+
+    if len(numbers) == 0:
+        return 0
+
+    average = total / len(numbers)
+    return average
+
+
+def find_maximum(numbers):
+    maximum = numbers[0]
+
+    for number in numbers:
+        if number > maximum:
+            maximum = number
+
+    return maximum
+
+
+def main():
+    x = 25
+    y = 10
+    print(y)
+
+    numbers = [10, 20, 30, 40]
+
+    result = calculate_average(numbers)
+    maximum = find_maximum(numbers)
+
+    print("Average:", result)
+    print("Maximum:", maximum)
+
+
+if __name__ == "__main__":
+    main()
+"""
+        report=analyze_python(source)
+        by_title={finding["title"]:finding for finding in report["findings"]}
+        self.assertEqual(by_title["Unused variable `unused_value`"]["line"],3)
+        self.assertEqual(by_title["Unused variable `x`"]["line"],27)
+        redundant=by_title["Potential redundant addition of zero to `total`"]
+        self.assertEqual(redundant["line"],7)
+        self.assertIn("total = total + 0",redundant["message"])
+        self.assertIn("Remove `total = total + 0`",redundant["suggestion"])
+        self.assertFalse(any("print" in title.lower() for title in by_title))
+        self.assertFalse(any(title in by_title for title in ("Unused variable `y`","Unused variable `numbers`","Unused variable `result`","Unused variable `maximum`")))
+        self.assertFalse(any("empty list" in finding["message"].lower() for finding in report["findings"]))
     def test_malformed_python(self):
         report=analyze_python("def broken(:")
         self.assertEqual(report["findings"][0]["title"],"Python syntax error")

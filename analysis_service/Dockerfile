@@ -8,4 +8,4 @@ COPY analysis ./analysis
 COPY analysis_service ./analysis_service
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "analysis_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["sh", "-c", "uvicorn analysis_service.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-1}"]

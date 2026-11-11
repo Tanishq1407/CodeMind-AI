@@ -11,8 +11,8 @@ Copy `.env.example` to `.env.local` for local development. Keep real values out 
 | `NEXT_PUBLIC_APP_URL` | Yes in production | Public canonical origin for metadata and sitemap. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional | Google OAuth. Both must be set; register callback `/api/auth/callback/google`. |
 | `GITHUB_ID`, `GITHUB_SECRET` | Optional | GitHub identity sign-in. Callback `/api/auth/callback/github`. OAuth bearer/refresh tokens are deliberately not stored; repository import is not implemented. |
-| `ANALYSIS_SERVICE_URL` | Recommended | Private FastAPI service origin. Do not expose this service publicly without authentication and network controls. |
-| `ANALYSIS_SERVICE_TOKEN` | Required when the service URL is set | Shared random service credential. Set the same secret in the Next.js app and private FastAPI deployment. |
+| `ANALYSIS_SERVICE_URL` | Required in production for Python/C++ AST/lexical service analysis | Base URL of the authenticated FastAPI service (for example, the HTTPS `onrender.com` URL assigned after deployment). Server-only; never use a `NEXT_PUBLIC_` prefix. |
+| `ANALYSIS_SERVICE_TOKEN` | Required in production when using the FastAPI service | Shared random service credential. Copy the generated Render secret to Vercel without putting it in source control or chat. |
 | `AI_PROVIDER`, `AI_API_KEY`, `AI_MODEL` | Optional | Server-only assistant configuration. Set `AI_PROVIDER=openai-compatible` for an OpenAI-compatible chat completions endpoint. Never prefix secrets with `NEXT_PUBLIC_`. |
 | `AI_BASE_URL` | Optional | Base URL for the configured compatible API; defaults to `https://api.openai.com/v1`. |
 | `RESEND_API_KEY` | Required for account verification/recovery | Resend API key, kept server-side. |
@@ -22,6 +22,8 @@ Copy `.env.example` to `.env.local` for local development. Keep real values out 
 Google/GitHub and AI credentials are optional. The email/password account flow requires Resend so it can verify addresses and deliver recovery links. The API fails closed if email delivery is not configured.
 
 The Coding Assistant uses a real OpenAI-compatible chat completions API only when all three AI variables are configured. Without them, requests return a setup message and no assistant answer is fabricated. Requests may send the user-entered prompt, explicitly attached code or a selected saved report's source, plus a compact summary of that same user's recurring findings and score history. The summary does not include other users' data. The configured provider may charge per token; review its pricing and data-retention terms before enabling it. For production, set these values as server-only Vercel environment variables and redeploy after changes.
+
+In production, Python and C++ requests require both analysis-service variables above. In local development, when the URL is absent, the app uses its limited lexical fallback and labels it in the report. Configure the same token on Render and Vercel; the Render URL is assigned only after the service is deployed.
 
 ## Local registration setup
 
